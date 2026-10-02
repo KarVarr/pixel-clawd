@@ -1,0 +1,8 @@
+{
+  "name": "clawd",
+  "version": "0.2.1",
+  "description": "Pixel Clawd walks above the prompt while Claude works: scenes and speech bubbles for what is happening now. Early-access mod API; tested on Claude Code 2.1.287.",
+  "author": { "name": "Vardanian Karen" },
+  "license": "MIT",
+  "types": "./types/index.d.ts"
+}
