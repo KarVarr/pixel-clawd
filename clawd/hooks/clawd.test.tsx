@@ -23,3 +23,12 @@ test('draws only after a turn starts, and /clawd off hides it', async ($, on) =>
   expect(await hidden.find({ key: 'clawd' })).toBeUndefined()
   await hidden.unmount()
 })
+
+test('the desktop surface gets an SVG while a turn runs', async ($, on) => {
+  on('ui.render', ($, e) => { const { Text } = $.ui.resolve(e); return <Text>base</Text> })
+  on('turn.start', (_$, e) => ({ turnId: e.turnId }))
+  await $.turn.start({ text: 'hi', turnId: 't2' })
+  const ui = await $.ui.mount({ plugin: 'clawd', surface: 'desktop', ...BAND })
+  expect(await ui.find({ type: 'Svg' })).toBeDefined()
+  await ui.unmount()
+})

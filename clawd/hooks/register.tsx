@@ -14,6 +14,7 @@ const PX = ROWS * 2
 const SPRITE_W = 14
 const SPRITE_H = 7
 const MIN_COLUMNS = 34
+const DESKTOP_COLUMNS = 80
 const SWAP_TICKS = 10 // 10 ticks of 200 ms: a new phrase or scene at most every 2 s
 const HOLD_ERROR_TICKS = 25
 const NONE = -1
@@ -291,32 +292,24 @@ const bubble = (c: Canvas, text: string, centre: number) => {
   write(c, bx, 3, '╰' + '─'.repeat(bw - 2) + '╯', edge, NONE, true)
 }
 
+const cellAt = (c: Canvas, r: number, x: number) => {
+  const i = r * c.w + x
+  const top = c.px[2 * r * c.w + x]
+  const bot = c.px[(2 * r + 1) * c.w + x]
+  if (c.ch[i]) return { cp: c.ch[i].codePointAt(0) as number, fg: c.fg[i], bg: c.bg[i] === NONE ? DEFAULT : c.bg[i] }
+  if (top !== NONE && bot !== NONE) return { cp: 0x2580, fg: top, bg: bot }
+  if (top !== NONE) return { cp: 0x2580, fg: top, bg: DEFAULT }
+  if (bot !== NONE) return { cp: 0x2584, fg: bot, bg: DEFAULT }
+  return { cp: 0x20, fg: DEFAULT, bg: DEFAULT }
+}
+
+// terminal: one Raster, cells packed as [codePoint, fg, bg] u32 triplets
 const toCells = (c: Canvas, rows: number) => {
   const words = new Uint32Array(c.w * rows * 3)
   const skip = ROWS - rows
   for (let r = skip; r < ROWS; r++) {
     for (let x = 0; x < c.w; x++) {
-      const i = r * c.w + x
-      const top = c.px[2 * r * c.w + x]
-      const bot = c.px[(2 * r + 1) * c.w + x]
-      let cp = 0x20
-      let fg = DEFAULT
-      let bg = DEFAULT
-      if (c.ch[i]) {
-        cp = c.ch[i].codePointAt(0) as number
-        fg = c.fg[i]
-        bg = c.bg[i] === NONE ? DEFAULT : c.bg[i]
-      } else if (top !== NONE && bot !== NONE) {
-        cp = 0x2580
-        fg = top
-        bg = bot
-      } else if (top !== NONE) {
-        cp = 0x2580
-        fg = top
-      } else if (bot !== NONE) {
-        cp = 0x2584
-        fg = bot
-      }
+      const { cp, fg, bg } = cellAt(c, r, x)
       const o = ((r - skip) * c.w + x) * 3
       words[o] = cp
       words[o + 1] = fg
@@ -324,6 +317,38 @@ const toCells = (c: Canvas, rows: number) => {
     }
   }
   return new Uint8Array(words.buffer).toBase64()
+}
+
+// desktop: the same cells as an SVG (a cell is CELL px wide and 2 CELL tall; a half block is one square)
+const CELL = 7
+const hex = (n: number) => '#' + (n & 0xffffff).toString(16).padStart(6, '0')
+const esc = (ch: string) => (ch === '&' ? '&amp;' : ch === '<' ? '&lt;' : ch === '>' ? '&gt;' : ch)
+
+const toSvg = (c: Canvas, rows: number) => {
+  const skip = ROWS - rows
+  const out: string[] = []
+  const rect = (x: number, y: number, h: number, color: number) =>
+    out.push(`<rect x="${x * CELL}" y="${y}" width="${CELL}" height="${h}" fill="${hex(color)}"/>`)
+  for (let r = skip; r < ROWS; r++) {
+    const y = (r - skip) * 2 * CELL
+    for (let x = 0; x < c.w; x++) {
+      const { cp, fg, bg } = cellAt(c, r, x)
+      if (cp === 0x2580) {
+        rect(x, y, CELL, fg)
+        if (bg !== DEFAULT) rect(x, y + CELL, CELL, bg)
+      } else if (cp === 0x2584) rect(x, y + CELL, CELL, fg)
+      else if (cp !== 0x20) {
+        if (bg !== DEFAULT) rect(x, y, 2 * CELL, bg)
+        const ch = String.fromCodePoint(cp)
+        out.push(
+          `<text x="${x * CELL}" y="${y + 1.4 * CELL}" font-family="Consolas,Menlo,monospace" font-size="${CELL * 1.5}" fill="${fg === DEFAULT ? '#cccccc' : hex(fg)}">${esc(ch)}</text>`,
+        )
+      } else if (bg !== DEFAULT) rect(x, y, 2 * CELL, bg)
+    }
+  }
+  const w = c.w * CELL
+  const h = rows * 2 * CELL
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${out.join('')}</svg>`
 }
 
 export const register: Register = on => {
@@ -419,19 +444,32 @@ export const register: Register = on => {
     const s = await read($, anim)
     const isOn = await read($, enabled)
     const p = e.props
-    const width = p.bodyColumns
-    const isShown = isOn && !p.hasSurvey && width >= MIN_COLUMNS && p.maxRows >= 4 && (s.active ? p.isWorking : s.leave > 0)
+    const isTerminal = e.surface === 'terminal'
+    if (!isTerminal && e.surface !== 'desktop') return next(e)
+
+    // the terminal draws as wide as the band; the desktop draws a fixed-size picture
+    const width = isTerminal ? p.bodyColumns : DESKTOP_COLUMNS
+    const fits = isTerminal ? width >= MIN_COLUMNS && p.maxRows >= 4 : true
+    const isShown = isOn && !p.hasSurvey && fits && (s.active ? p.isWorking : s.leave > 0)
 
     if (!isShown) return next(e)
 
-    const rows = Math.min(ROWS, p.maxRows, s.active ? ROWS : s.leave)
+    const rows = Math.min(ROWS, isTerminal ? p.maxRows : ROWS, s.active ? ROWS : s.leave)
     const c = newCanvas(width)
     drawScene(c, s.scene, s.tick)
     const centre = drawClawd(c, s.tick)
     if (s.phrase && (s.active || s.leave > ROWS - 2)) bubble(c, s.phrase, centre)
 
-    if (e.surface !== 'terminal') return next(e)
-    const { Raster } = $.ui.resolve(e)
-    return <Raster key="clawd" columns={width} rows={rows} cells={toCells(c, rows)} />
+    if (e.surface === 'terminal') {
+      const { Raster } = $.ui.resolve(e)
+      return <Raster key="clawd" columns={width} rows={rows} cells={toCells(c, rows)} />
+    }
+    if (e.surface === 'desktop') {
+      const { Svg } = $.ui.resolve(e)
+      const source = toSvg(c, rows)
+      if (source.length > 120000) return next(e)
+      return <Svg source={source} alt="Clawd, the pixel mascot, walking while Claude works" />
+    }
+    return next(e)
   })
 }
