@@ -31,6 +31,8 @@ const LABELS: Record<Scene, string> = {
   night: 'read',
   rain: 'web',
   matrix: 'search',
+  checks: 'tests',
+  sunrise: 'git',
 }
 
 const hash = (n: number) => {
@@ -43,8 +45,8 @@ const hash = (n: number) => {
 const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…' : s)
 const base = (p: unknown) => String(p ?? '').split(/[\\/]/).pop() || 'файл'
 
-const sceneOf = (tool: string): Scene => {
-  if (tool === 'Bash' || tool === 'PowerShell') return 'shell'
+const sceneOf = (tool: string, command = ''): Scene => {
+  if (tool === 'Bash' || tool === 'PowerShell') return COMMANDS.find(([re]) => re.test(command))?.[2] ?? 'shell'
   if (tool === 'Read') return 'night'
   if (tool === 'Grep' || tool === 'Glob') return 'matrix'
   if (tool === 'WebFetch' || tool === 'WebSearch') return 'rain'
@@ -53,19 +55,24 @@ const sceneOf = (tool: string): Scene => {
   return 'thread'
 }
 
-const COMMANDS: [RegExp, string][] = [
-  [/\b(jest|vitest|pytest|mocha)\b|\b(npm|pnpm|yarn) (run )?test\b|\bplugin test\b/, 'Гоняю тесты'],
-  [/\bplugin validate\b/, 'Проверяю плагин'],
-  [/\bgit commit\b/, 'Делаю коммит'],
-  [/\bgit push\b/, 'Отправляю изменения'],
-  [/\bgit (status|diff|log|show)\b/, 'Смотрю историю git'],
-  [/\b(npm|pnpm|yarn|pip) (i|install|add)\b/, 'Ставлю зависимости'],
-  [/\b(tsc|webpack|esbuild)\b|\b(npm|pnpm|yarn) run build\b|\bvite build\b/, 'Собираю проект'],
-  [/\b(eslint|prettier|lint)\b/, 'Проверяю стиль кода'],
-  [/\b(curl|wget)\b/, 'Качаю данные'],
-  [/\b(mkdir|rm|mv|cp)\b/, 'Навожу порядок в файлах'],
-  [/\b(ls|dir|cat|head|tail|find|tree)\b/, 'Смотрю, что лежит в папках'],
+const COMMANDS: [RegExp, string[], Scene?][] = [
+  [/\b(jest|vitest|pytest|mocha)\b|\b(npm|pnpm|yarn) (run )?test\b|\bplugin test\b/, ['Гоняю тесты', 'Проверяю, всё ли зелёное', 'Прогоняю проверки'], 'checks'],
+  [/\bplugin validate\b/, ['Проверяю плагин', 'Сверяю плагин с правилами']],
+  [/\bgit commit\b/, ['Делаю коммит', 'Фиксирую изменения'], 'sunrise'],
+  [/\bgit push\b/, ['Отправляю изменения', 'Выкатываю в репозиторий'], 'sunrise'],
+  [/\bgit (status|diff|log|show)\b/, ['Смотрю историю git', 'Изучаю, что менялось'], 'sunrise'],
+  [/\b(npm|pnpm|yarn|pip) (i|install|add)\b/, ['Ставлю зависимости', 'Подтягиваю пакеты']],
+  [/\b(tsc|webpack|esbuild)\b|\b(npm|pnpm|yarn) run build\b|\bvite build\b/, ['Собираю проект', 'Склеиваю сборку']],
+  [/\b(eslint|prettier|lint)\b/, ['Проверяю стиль кода', 'Навожу красоту в коде']],
+  [/\b(curl|wget)\b/, ['Качаю данные', 'Стучусь в сеть']],
+  [/\b(mkdir|rm|mv|cp)\b/, ['Навожу порядок в файлах', 'Переставляю файлы']],
+  [/\b(ls|dir|cat|head|tail|find|tree)\b/, ['Смотрю, что лежит в папках', 'Осматриваюсь в папках']],
 ]
+
+const THINKING = ['Думаю…', 'Прикидываю…', 'Сопоставляю факты…', 'Взвешиваю варианты…', 'Придумываю следующий шаг…']
+
+// one of several phrasings, stable for one text
+const pick = (variants: string[], key: string) => variants[hash([...key].reduce((n, ch) => n * 31 + ch.charCodeAt(0), 7)) % variants.length]
 
 // text from the event when the API gives it, a canned phrase per tool type otherwise
 const phraseOf = (e: any): string => {
@@ -75,10 +82,10 @@ const phraseOf = (e: any): string => {
   if (tool === 'Bash' || tool === 'PowerShell') {
     const cmd = first(e.command)
     const known = COMMANDS.find(([re]) => re.test(String(e.command ?? '')))
-    text = known ? known[1] : first(e.description) || (cmd ? '$ ' + cmd : 'Запускаю команду')
-  } else if (tool === 'Read') text = 'Читаю ' + base(e.file_path)
-  else if (tool === 'Edit' || tool === 'MultiEdit') text = 'Правлю ' + base(e.file_path)
-  else if (tool === 'Write') text = 'Создаю ' + base(e.file_path)
+    text = known ? pick(known[1], cmd) : first(e.description) || (cmd ? '$ ' + cmd : 'Запускаю команду')
+  } else if (tool === 'Read') text = pick(['Читаю ', 'Изучаю ', 'Заглядываю в '], base(e.file_path)) + base(e.file_path)
+  else if (tool === 'Edit' || tool === 'MultiEdit') text = pick(['Правлю ', 'Подчищаю ', 'Дорабатываю '], base(e.file_path)) + base(e.file_path)
+  else if (tool === 'Write') text = pick(['Создаю ', 'Пишу '], base(e.file_path)) + base(e.file_path)
   else if (tool === 'NotebookEdit') text = 'Правлю ноутбук'
   else if (tool === 'Grep') text = first(e.pattern) ? `Ищу «${first(e.pattern)}»` : 'Ищу по коду'
   else if (tool === 'Glob') text = first(e.pattern) ? `Ищу файлы ${first(e.pattern)}` : 'Ищу файлы'
@@ -145,6 +152,30 @@ const waves = (c: Canvas, tick: number, top: number, bottom: number) => {
 
 const drawScene = (c: Canvas, scene: Scene, tick: number) => {
   const w = c.w
+  if (scene === 'checks') {
+    const cols = Math.floor(w / 3)
+    const lit = (tick >> 1) % (cols * 3 + 8)
+    for (let row = 0; row < 3; row++) {
+      for (let i = 0; i < cols; i++) {
+        const on = row * cols + i < lit
+        dot(c, i * 3 + 1, 2 + row * 3, on ? 0x4fbf6f : 0x3a3a45)
+        dot(c, i * 3 + 2, 2 + row * 3, on ? 0x2f8f4f : 0x2a2a33)
+      }
+    }
+    for (let x = 0; x < w; x++) dot(c, x, PX - 1, 0x4a4a58)
+    return
+  }
+  if (scene === 'sunrise') {
+    const sx = Math.floor(w * 0.7)
+    const cy = PX + 2 - ((tick >> 1) % 16)
+    for (let y = -4; y <= 4; y++) {
+      for (let x = -4; x <= 4; x++) if (x * x + y * y <= 16) dot(c, sx + x, cy + y, y < -1 ? 0xf6d060 : 0xf0a040)
+    }
+    for (let k = 0; k < 8; k++) dot(c, sx - 8 + k * 2 + (tick % 2), cy - 7 - (k % 2), 0xb08a30)
+    for (let x = 0; x < w; x++) dot(c, x, PX - 2, 0x6a4a3a)
+    for (let x = 0; x < w; x++) dot(c, x, PX - 1, 0x4a3328)
+    return
+  }
   if (scene === 'shell') {
     const palette = [0x2f6f8a, 0x2a8f8f, 0x2b4f9c, 0x3a9a9a]
     for (let i = 0; i < Math.floor(w / 3); i++) {
@@ -363,6 +394,7 @@ export const register: Register = on => {
   let sceneAt = -99
   let errorUntil = 0
   let inFlight = 0
+  let thinkN = 0
 
   const snap = (): Anim => ({ tick: tickN, active, leave: leaveLeft, phrase: curPhrase, scene: curScene })
 
@@ -416,7 +448,7 @@ export const register: Register = on => {
 
   on('tool.call', async ($, e, next) => {
     nextPhrase = phraseOf(e)
-    nextScene = sceneOf(String(e.tool))
+    nextScene = sceneOf(String(e.tool), String((e as any).command ?? ''))
     inFlight += 1
     const result = await next(e)
     inFlight -= 1
@@ -426,7 +458,8 @@ export const register: Register = on => {
       sceneAt = tickN
     }
     if (inFlight <= 0) {
-      nextPhrase = 'Думаю…'
+      thinkN += 1
+      nextPhrase = THINKING[thinkN % THINKING.length]
       nextScene = 'thread'
     }
     return result

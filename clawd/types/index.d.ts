@@ -1,4 +1,4 @@
-export type Scene = 'shell' | 'thread' | 'confetti' | 'volcano' | 'error' | 'night' | 'rain' | 'matrix'
+export type Scene = 'shell' | 'thread' | 'confetti' | 'volcano' | 'error' | 'night' | 'rain' | 'matrix' | 'checks' | 'sunrise'
 export type Anim = {
   tick: number
   active: boolean
